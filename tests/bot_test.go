@@ -25,6 +25,18 @@ func (s *MockSession) ChannelVoiceJoin(guildID, channelID string, mute, deaf boo
 	return nil, nil
 }
 
+func (s *MockSession) ChannelMessages(channelID string, limit int, beforeID, afterID, aroundID string, options ...discordgo.RequestOption) ([]*discordgo.Message, error) {
+	return nil, nil
+}
+
+func (s *MockSession) ChannelMessagesBulkDelete(channelID string, messages []string, options ...discordgo.RequestOption) error {
+	return nil
+}
+
+func (s *MockSession) ChannelMessageDelete(channelID, messageID string, options ...discordgo.RequestOption) error {
+	return nil
+}
+
 // PingCommand is a mock implementation of the Command interface for testing.
 type PingCommand struct{}
 

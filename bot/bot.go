@@ -16,6 +16,9 @@ import (
 type Messager interface {
 	ChannelMessageSend(channelID, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelVoiceJoin(guildID, channelID string, mute, deaf bool) (voice *discordgo.VoiceConnection, err error)
+	ChannelMessages(channelID string, limit int, beforeID, afterID, aroundID string, options ...discordgo.RequestOption) ([]*discordgo.Message, error)
+	ChannelMessagesBulkDelete(channelID string, messages []string, options ...discordgo.RequestOption) error
+	ChannelMessageDelete(channelID, messageID string, options ...discordgo.RequestOption) error
 }
 
 // Command is the interface for all bot commands.
