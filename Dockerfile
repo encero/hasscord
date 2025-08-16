@@ -8,7 +8,13 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o hasscord .
+# Build with build time information
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -a -installsuffix cgo \
+    -ldflags "-X main.BuildTime=$(date -u +'%Y-%m-%d %H:%M:%S UTC') \
+              -X main.BuildCommit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') \
+              -X main.BuildDate=$(date -u +'%Y-%m-%d')" \
+    -o hasscord .
 
 # Create the final image
 FROM alpine:latest
