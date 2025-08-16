@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  hasscord:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8080:8080" # Example port, adjust if your app uses a different one
+    environment:
+      # Add any specific environment variables here that are not in .env
+      # For example:
+      # SOME_OTHER_VAR: "value"
+      # DISCORD_TOKEN: ${DISCORD_TOKEN} # Example of explicitly mapping from .env

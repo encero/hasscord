@@ -26,7 +26,7 @@ func (s *State) Name() string {
 // Execute runs the command.
 func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []string) {
 	if s.HassClient == nil {
-		b.ChannelMessageSend(m.ChannelID, "Home Assistant client not initialized.")
+		b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Home Assistant client not initialized.")
 		return
 	}
 
@@ -43,7 +43,7 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 	err := s.HassClient.Conn.WriteJSON(req)
 	if err != nil {
 		log.Printf("Error sending get_states request: %v", err)
-		b.ChannelMessageSend(m.ChannelID, "Error fetching states from Home Assistant.")
+		b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to fetch states from Home Assistant.")
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 	case response := <-responseChan:
 		if !response.Success {
 			log.Printf("Failed to get states: %v", response.Error.Message)
-			b.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Failed to get states: %s", response.Error.Message))
+			b.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ **Error:** Failed to get states: %s", response.Error.Message))
 			return
 		}
 
@@ -59,27 +59,41 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 		err := json.Unmarshal(response.Result, &states)
 		if err != nil {
 			log.Printf("Error unmarshaling states: %v", err)
-			b.ChannelMessageSend(m.ChannelID, "Error processing states from Home Assistant.")
+			b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to process states from Home Assistant.")
 			return
 		}
 
 		var sb strings.Builder
-		sb.WriteString("**Home Assistant States (binary_sensor.dvere_):**\n")
-		found := false
+		var doorSensors []hass.State
+
+		// Separate door sensors from other binary sensors
 		for _, state := range states {
-			if strings.HasPrefix(state.EntityID, "binary_sensor.dvere_") {
-				sb.WriteString(fmt.Sprintf("- `%s`: `%s`\n", state.EntityID, state.State))
-				found = true
+			// grab all dvere_ sensors but not the opening ones
+			if strings.HasPrefix(state.EntityID, "binary_sensor.dvere_") && !strings.HasSuffix(state.EntityID, "_opening") {
+				doorSensors = append(doorSensors, state)
 			}
 		}
 
-		if !found {
-			sb.WriteString("No matching entities found.\n")
+		// Build door sensor section
+		if len(doorSensors) > 0 {
+			sb.WriteString("🚪 **Door Sensors:**\n")
+			for _, state := range doorSensors {
+				status := "🔒 Closed"
+				if state.State == "on" {
+					status = "🔓 Open"
+				}
+				sb.WriteString(fmt.Sprintf("• `%s`: %s\n", strings.TrimPrefix(state.EntityID, "binary_sensor."), status))
+			}
+		} else {
+			sb.WriteString("🚪 **Door Sensors:** None found\n")
 		}
+
+		// Add summary
+		sb.WriteString(fmt.Sprintf("\n📊 **Summary:** %d door sensor(s)", len(doorSensors)))
 
 		b.ChannelMessageSend(m.ChannelID, sb.String())
 
 	case <-time.After(5 * time.Second):
-		b.ChannelMessageSend(m.ChannelID, "Timeout waiting for Home Assistant states.")
+		b.ChannelMessageSend(m.ChannelID, "⏰ **Timeout:** Request timed out waiting for Home Assistant states.")
 	}
 }
