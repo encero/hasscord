@@ -9,11 +9,11 @@ RUN go mod download
 COPY . .
 
 # Build with build time information
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -a -installsuffix cgo \
-    -ldflags "-X main.BuildTime=$(date -u +'%Y-%m-%d %H:%M:%S UTC') \
-              -X main.BuildCommit=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown') \
-              -X main.BuildDate=$(date -u +'%Y-%m-%d')" \
+RUN BUILD_TIME="$(date -u +'%Y-%m-%d %H:%M:%S UTC')" \
+  BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+  BUILD_DATE="$(date -u +'%Y-%m-%d')" && \
+  CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X main.BuildTime=${BUILD_TIME} -X main.BuildCommit=${BUILD_COMMIT} -X main.BuildDate=${BUILD_DATE}" \
     -o hasscord .
 
 # Create the final image
