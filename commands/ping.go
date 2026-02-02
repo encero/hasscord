@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"log"
+
 	"github.com/bwmarrin/discordgo"
 	"hasscord/bot"
 )
@@ -15,5 +17,7 @@ func (p *Ping) Name() string {
 
 // Execute runs the command.
 func (p *Ping) Execute(s bot.Messager, m *discordgo.MessageCreate, args []string) {
-	s.ChannelMessageSend(m.ChannelID, "Pong!")
+	if _, err := s.ChannelMessageSend(m.ChannelID, "Pong!"); err != nil {
+		log.Printf("Error sending ping response: %v", err)
+	}
 }

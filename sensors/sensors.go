@@ -1,6 +1,7 @@
 package sensors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -85,51 +86,76 @@ func GetPauseStatus() (int, int) {
 }
 
 // HandleHassEvents processes Home Assistant events and tracks sensor states
-func HandleHassEvents(b *bot.Bot, events <-chan hass.Event, channelID string) {
-	for event := range events {
-		if event.EventType == "state_changed" {
-			var stateData hass.StateChangedData
-			err := json.Unmarshal(event.Data, &stateData)
-			if err != nil {
-				log.Printf("Error unmarshaling state change data: %v", err)
-				continue
+func HandleHassEvents(ctx context.Context, b *bot.Bot, events <-chan hass.Event, channelID string, sensorPrefix string) {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Event handler shutting down...")
+			return
+		case event, ok := <-events:
+			if !ok {
+				log.Println("Event channel closed, stopping handler")
+				return
 			}
+			handleEvent(b, event, channelID, sensorPrefix)
+		}
+	}
+}
 
-			// We only care about sensors
-			if !strings.HasPrefix(stateData.EntityID, "binary_sensor.dvere_") {
-				continue
-			}
+func handleEvent(b *bot.Bot, event hass.Event, channelID string, sensorPrefix string) {
+	if event.EventType != "state_changed" {
+		return
+	}
 
-			onSensorsMutex.Lock()
-			if stateData.NewState.State == "on" {
-				if _, exists := onSensors[stateData.EntityID]; !exists {
-					onSensors[stateData.EntityID] = SensorState{OnTime: time.Now(), LastSent: time.Time{}, Paused: false}
-					log.Printf("Sensor %s turned on at %s", stateData.EntityID, onSensors[stateData.EntityID].OnTime.Format(time.RFC3339))
-				}
-			} else {
-				if state, exists := onSensors[stateData.EntityID]; exists {
-					if !state.LastSent.IsZero() {
-						message := fmt.Sprintf("Door `%s` is now closed.", strings.TrimPrefix(stateData.EntityID, "binary_sensor."))
-						b.Session.ChannelMessageSend(channelID, message)
-					}
-					delete(onSensors, stateData.EntityID)
-					log.Printf("Sensor %s turned off or changed state to %s", stateData.EntityID, stateData.NewState.State)
+	var stateData hass.StateChangedData
+	err := json.Unmarshal(event.Data, &stateData)
+	if err != nil {
+		log.Printf("Error unmarshaling state change data: %v", err)
+		return
+	}
+
+	// We only care about sensors matching the configured prefix
+	if !strings.HasPrefix(stateData.EntityID, sensorPrefix) {
+		return
+	}
+
+	onSensorsMutex.Lock()
+	defer onSensorsMutex.Unlock()
+
+	if stateData.NewState.State == "on" {
+		if _, exists := onSensors[stateData.EntityID]; !exists {
+			onSensors[stateData.EntityID] = SensorState{OnTime: time.Now(), LastSent: time.Time{}, Paused: false}
+			log.Printf("Sensor %s turned on at %s", stateData.EntityID, onSensors[stateData.EntityID].OnTime.Format(time.RFC3339))
+		}
+	} else {
+		if state, exists := onSensors[stateData.EntityID]; exists {
+			if !state.LastSent.IsZero() {
+				message := fmt.Sprintf("Door `%s` is now closed.", strings.TrimPrefix(stateData.EntityID, "binary_sensor."))
+				if _, err := b.Session.ChannelMessageSend(channelID, message); err != nil {
+					log.Printf("Error sending door closed message: %v", err)
 				}
 			}
-			onSensorsMutex.Unlock()
+			delete(onSensors, stateData.EntityID)
+			log.Printf("Sensor %s turned off or changed state to %s", stateData.EntityID, stateData.NewState.State)
 		}
 	}
 }
 
 // CheckOnSensors monitors sensors that are "on" and sends notifications based on timeouts
-func CheckOnSensors(b *bot.Bot, channelID string, timeout int, timeoutReminder int) {
+func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout int, timeoutReminder int, sensorPrefix string) {
 	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
 	defer ticker.Stop()
 
 	reminderTime := time.Duration(timeoutReminder) * time.Second
 	const maxRemindDuration = 1 * time.Hour
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Sensor checker shutting down...")
+			return
+		case <-ticker.C:
+		}
 		onSensorsMutex.Lock()
 		for entityID, state := range onSensors {
 			durationOn := time.Since(state.OnTime)
@@ -147,23 +173,29 @@ func CheckOnSensors(b *bot.Bot, channelID string, timeout int, timeoutReminder i
 
 			// Check for initial timeout
 			if shouldSendInitial && !state.Paused {
-				message := fmt.Sprintf("Door `%s` has been open for more than %d seconds! @everyone", strings.TrimPrefix(entityID, "binary_sensor."), timeout)
-				b.Session.ChannelMessageSend(channelID, message)
+				message := fmt.Sprintf("Door `%s` has been open for more than %d seconds! @everyone", strings.TrimPrefix(entityID, sensorPrefix), timeout)
+				if _, err := b.Session.ChannelMessageSend(channelID, message); err != nil {
+					log.Printf("Error sending initial door open message: %v", err)
+				}
 				state.LastSent = time.Now()
 				onSensors[entityID] = state // Update the map with the new LastSent time
 				log.Printf("Sent initial message for %s", entityID)
 			} else if shouldSendReminder && !state.Paused {
 				// Resend message every 5 minutes, up to an hour
-				message := fmt.Sprintf("Reminder: Door `%s` is still open (open for %s)! @everyone", strings.TrimPrefix(entityID, "binary_sensor."), durationOn.Round(time.Second).String())
-				b.Session.ChannelMessageSend(channelID, message)
+				message := fmt.Sprintf("Reminder: Door `%s` is still open (open for %s)! @everyone", strings.TrimPrefix(entityID, sensorPrefix), durationOn.Round(time.Second).String())
+				if _, err := b.Session.ChannelMessageSend(channelID, message); err != nil {
+					log.Printf("Error sending reminder message: %v", err)
+				}
 				state.LastSent = time.Now()
 				onSensors[entityID] = state // Update the map with the new LastSent time
 				log.Printf("Sent reminder message for %s", entityID)
 			} else if isOverAnHour {
 				// Remove after one hour (always remove, regardless of pause state)
 				if !state.Paused {
-					message := fmt.Sprintf("Door `%s` has been open for over an hour. Stopping reminders.", strings.TrimPrefix(entityID, "binary_sensor."))
-					b.Session.ChannelMessageSend(channelID, message)
+					message := fmt.Sprintf("Door `%s` has been open for over an hour. Stopping reminders.", strings.TrimPrefix(entityID, sensorPrefix))
+					if _, err := b.Session.ChannelMessageSend(channelID, message); err != nil {
+						log.Printf("Error sending hour limit message: %v", err)
+					}
 				}
 				delete(onSensors, entityID)
 				log.Printf("Removed %s from tracking after 1 hour", entityID)

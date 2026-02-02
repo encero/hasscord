@@ -15,7 +15,8 @@ import (
 
 // State represents the state command.
 type State struct {
-	HassClient *hass.Client
+	HassClient   *hass.Client
+	SensorPrefix string
 }
 
 // Name returns the command's name.
@@ -26,7 +27,9 @@ func (s *State) Name() string {
 // Execute runs the command.
 func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []string) {
 	if s.HassClient == nil {
-		b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Home Assistant client not initialized.")
+		if _, err := b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Home Assistant client not initialized."); err != nil {
+			log.Printf("Error sending hass client error message: %v", err)
+		}
 		return
 	}
 
@@ -43,15 +46,23 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 	err := s.HassClient.Conn.WriteJSON(req)
 	if err != nil {
 		log.Printf("Error sending get_states request: %v", err)
-		b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to fetch states from Home Assistant.")
+		if _, sendErr := b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to fetch states from Home Assistant."); sendErr != nil {
+			log.Printf("Error sending fetch error message: %v", sendErr)
+		}
 		return
 	}
 
 	select {
 	case response := <-responseChan:
 		if !response.Success {
-			log.Printf("Failed to get states: %v", response.Error.Message)
-			b.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ **Error:** Failed to get states: %s", response.Error.Message))
+			errMsg := "unknown error"
+			if response.Error != nil {
+				errMsg = response.Error.Message
+			}
+			log.Printf("Failed to get states: %v", errMsg)
+			if _, sendErr := b.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ **Error:** Failed to get states: %s", errMsg)); sendErr != nil {
+				log.Printf("Error sending get states error message: %v", sendErr)
+			}
 			return
 		}
 
@@ -59,7 +70,9 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 		err := json.Unmarshal(response.Result, &states)
 		if err != nil {
 			log.Printf("Error unmarshaling states: %v", err)
-			b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to process states from Home Assistant.")
+			if _, sendErr := b.ChannelMessageSend(m.ChannelID, "❌ **Error:** Failed to process states from Home Assistant."); sendErr != nil {
+				log.Printf("Error sending unmarshal error message: %v", sendErr)
+			}
 			return
 		}
 
@@ -68,8 +81,8 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 
 		// Separate door sensors from other binary sensors
 		for _, state := range states {
-			// grab all dvere_ sensors but not the opening ones
-			if strings.HasPrefix(state.EntityID, "binary_sensor.dvere_") && !strings.HasSuffix(state.EntityID, "_opening") {
+			// grab sensors matching prefix but not the opening ones
+			if strings.HasPrefix(state.EntityID, s.SensorPrefix) && !strings.HasSuffix(state.EntityID, "_opening") {
 				doorSensors = append(doorSensors, state)
 			}
 		}
@@ -82,7 +95,7 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 				if state.State == "on" {
 					status = "🔓 Open"
 				}
-				sb.WriteString(fmt.Sprintf("• `%s`: %s\n", strings.TrimPrefix(state.EntityID, "binary_sensor."), status))
+				sb.WriteString(fmt.Sprintf("• `%s`: %s\n", strings.TrimPrefix(state.EntityID, s.SensorPrefix), status))
 			}
 		} else {
 			sb.WriteString("🚪 **Door Sensors:** None found\n")
@@ -91,9 +104,14 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 		// Add summary
 		sb.WriteString(fmt.Sprintf("\n📊 **Summary:** %d door sensor(s)", len(doorSensors)))
 
-		b.ChannelMessageSend(m.ChannelID, sb.String())
+		if _, err := b.ChannelMessageSend(m.ChannelID, sb.String()); err != nil {
+			log.Printf("Error sending state response: %v", err)
+		}
 
 	case <-time.After(5 * time.Second):
-		b.ChannelMessageSend(m.ChannelID, "⏰ **Timeout:** Request timed out waiting for Home Assistant states.")
+		s.HassClient.RemovePending(id) // Clean up pending channel on timeout
+		if _, err := b.ChannelMessageSend(m.ChannelID, "⏰ **Timeout:** Request timed out waiting for Home Assistant states."); err != nil {
+			log.Printf("Error sending timeout message: %v", err)
+		}
 	}
 }
