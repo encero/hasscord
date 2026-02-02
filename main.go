@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -39,6 +40,10 @@ func main() {
 
 	cfg := config.Load()
 
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
 	b, err := bot.New(cfg)
 	if err != nil {
 		log.Fatalf("Error creating bot: %v", err)
@@ -58,18 +63,21 @@ func main() {
 	// Register commands
 	b.RegisterCommand(&commands.Ping{})
 	b.RegisterCommand(&commands.ClearChannel{Config: cfg})
-	b.RegisterCommand(&commands.State{HassClient: hassClient})
+	b.RegisterCommand(&commands.State{HassClient: hassClient, SensorPrefix: cfg.SensorPrefix})
 	b.RegisterCommand(&commands.Pause{})
 
-	go hassClient.Listen()
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go hassClient.Listen(ctx)
 
 	events, err := hassClient.SubscribeToEvents()
 	if err != nil {
 		log.Fatalf("Error subscribing to Home Assistant events: %v", err)
 	}
 
-	go sensors.HandleHassEvents(b, events, cfg.ChannelID)
-	go sensors.CheckOnSensors(b, cfg.ChannelID, cfg.SensorOnTimeout, cfg.SensorOnTimeoutReminder)
+	go sensors.HandleHassEvents(ctx, b, events, cfg.ChannelID, cfg.SensorPrefix)
+	go sensors.CheckOnSensors(ctx, b, cfg.ChannelID, cfg.SensorOnTimeout, cfg.SensorOnTimeoutReminder, cfg.SensorPrefix)
 
-	b.Start()
+	b.Start(cancel)
 }

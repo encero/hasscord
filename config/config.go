@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -15,8 +16,9 @@ type Config struct {
 	HassURL                 string
 	HassToken               string
 	ChannelID               string
-	SensorOnTimeout         int // in seconds
-	SensorOnTimeoutReminder int // in seconds
+	SensorOnTimeout         int    // in seconds
+	SensorOnTimeoutReminder int    // in seconds
+	SensorPrefix            string // entity ID prefix for door sensors (e.g., "binary_sensor.dvere_")
 }
 
 // Load loads the configuration from environment variables.
@@ -48,6 +50,7 @@ func Load() *Config {
 		ChannelID:               getEnv("CHANNEL_ID", ""),
 		SensorOnTimeout:         sensorOnTimeout,
 		SensorOnTimeoutReminder: sensorOnTimeoutReminder,
+		SensorPrefix:            getEnv("SENSOR_PREFIX", "binary_sensor.dvere_"),
 	}
 }
 
@@ -57,4 +60,28 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// Validate checks that all required configuration values are present.
+func (c *Config) Validate() error {
+	var missing []string
+
+	if c.Token == "" {
+		missing = append(missing, "DISCORD_TOKEN")
+	}
+	if c.HassURL == "" {
+		missing = append(missing, "HASS_URL")
+	}
+	if c.HassToken == "" {
+		missing = append(missing, "HASS_TOKEN")
+	}
+	if c.ChannelID == "" {
+		missing = append(missing, "CHANNEL_ID")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required environment variables: %v", missing)
+	}
+
+	return nil
 }

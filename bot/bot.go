@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -56,8 +57,9 @@ func (b *Bot) RegisterCommand(cmd Command) {
 	b.Commands[cmd.Name()] = cmd
 }
 
-// Start starts the bot and connects to Discord.
-func (b *Bot) Start() {
+// Start starts the bot and connects to Discord. It blocks until shutdown signal is received.
+// The returned cancel function should be called to signal goroutines to stop.
+func (b *Bot) Start(cancel context.CancelFunc) {
 	b.Session.AddHandler(b.ready)
 	b.Session.AddHandler(b.messageCreate)
 
@@ -72,6 +74,7 @@ func (b *Bot) Start() {
 	<-sc
 
 	fmt.Println("Shutting down...")
+	cancel() // Signal all goroutines to stop
 	b.Session.Close()
 }
 

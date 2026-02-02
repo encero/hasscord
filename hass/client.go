@@ -1,6 +1,7 @@
 package hass
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -74,7 +75,7 @@ func New(url, token string) (*Client, error) {
 		Token:        token,
 		MessageID:    1,
 		pending:      make(map[int]chan<- Message),
-		eventChannel: make(chan Event),
+		eventChannel: make(chan Event, 100), // Buffered to prevent blocking on slow consumers
 	}, nil
 }
 
@@ -90,6 +91,13 @@ func (c *Client) RegisterPending(id int, ch chan<- Message) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.pending[id] = ch
+}
+
+// RemovePending removes a pending response channel (used for cleanup on timeout)
+func (c *Client) RemovePending(id int) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	delete(c.pending, id)
 }
 
 // Authenticate authenticates the client with Home Assistant.
@@ -123,7 +131,11 @@ func (c *Client) Authenticate() error {
 	}
 	log.Printf("Received auth response type: %s", msg.Type)
 	if msg.Type == "auth_invalid" {
-		return fmt.Errorf("authentication failed: %s", msg.Error.Message)
+		errMsg := "unknown error"
+		if msg.Error != nil {
+			errMsg = msg.Error.Message
+		}
+		return fmt.Errorf("authentication failed: %s", errMsg)
 	}
 	if msg.Type != "auth_ok" {
 		return fmt.Errorf("unexpected message type after auth: %s", msg.Type)
@@ -159,7 +171,11 @@ func (c *Client) SubscribeToEvents() (<-chan Event, error) {
 	case result := <-resultChan:
 		log.Printf("Received subscribe_events response: %+v", result)
 		if !result.Success {
-			return nil, fmt.Errorf("failed to subscribe to events: %s", result.Error.Message)
+			errMsg := "unknown error"
+			if result.Error != nil {
+				errMsg = result.Error.Message
+			}
+			return nil, fmt.Errorf("failed to subscribe to events: %s", errMsg)
 		}
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for subscription result")
@@ -169,23 +185,35 @@ func (c *Client) SubscribeToEvents() (<-chan Event, error) {
 }
 
 // Listen starts listening for messages from Home Assistant.
-func (c *Client) Listen() {
-	for {
-		var msg Message
-		err := c.Conn.ReadJSON(&msg)
-		if err != nil {
-			log.Printf("Error reading from WebSocket: %v", err)
-			close(c.eventChannel)
-			return
-		}
+func (c *Client) Listen(ctx context.Context) {
+	defer close(c.eventChannel)
 
-		c.mutex.Lock()
-		if ch, ok := c.pending[msg.ID]; ok {
-			ch <- msg
-			delete(c.pending, msg.ID)
-		} else if msg.Type == "event" {
-			c.eventChannel <- *msg.Event
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Home Assistant listener shutting down...")
+			return
+		default:
+			var msg Message
+			err := c.Conn.ReadJSON(&msg)
+			if err != nil {
+				log.Printf("Error reading from WebSocket: %v", err)
+				return
+			}
+
+			c.mutex.Lock()
+			if ch, ok := c.pending[msg.ID]; ok {
+				ch <- msg
+				delete(c.pending, msg.ID)
+			} else if msg.Type == "event" {
+				select {
+				case c.eventChannel <- *msg.Event:
+				case <-ctx.Done():
+					c.mutex.Unlock()
+					return
+				}
+			}
+			c.mutex.Unlock()
 		}
-		c.mutex.Unlock()
 	}
 }
