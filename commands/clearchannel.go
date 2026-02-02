@@ -100,7 +100,7 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 	}
 
 	msg := fmt.Sprintf("Finished clearing channel. Deleted %d messages.", deletedCount)
-	if deletedCount >= maxIterations*100 {
+	if iteration >= maxIterations {
 		msg += " (reached iteration limit)"
 	}
 	if _, err := s.ChannelMessageSend(m.ChannelID, msg); err != nil {
