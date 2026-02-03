@@ -38,7 +38,8 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 	const maxIterations = 100 // Prevent infinite loops
 	reachedIterationLimit := true
 
-	for iteration := 0; iteration < maxIterations; iteration++ {
+	iteration := 0
+	for ; iteration < maxIterations; iteration++ {
 		messages, err := s.ChannelMessages(c.Config.ChannelID, 100, lastMessageID, "", "")
 		if err != nil {
 			log.Printf("Error fetching messages: %v", err)
