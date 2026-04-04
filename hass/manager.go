@@ -246,6 +246,17 @@ func (m *Manager) listen(ctx context.Context) {
 		return
 	}
 
+	stop := make(chan struct{})
+	defer close(stop)
+
+	go func(conn *websocket.Conn) {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}(client.Conn)
+
 	for {
 		select {
 		case <-ctx.Done():
