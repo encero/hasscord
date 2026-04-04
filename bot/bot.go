@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"hasscord/config"
@@ -59,13 +60,32 @@ func (b *Bot) RegisterCommand(cmd Command) {
 
 // Start starts the bot and connects to Discord. It blocks until shutdown signal is received.
 // The returned cancel function should be called to signal goroutines to stop.
+// It will retry connecting to Discord with exponential backoff if the connection fails.
 func (b *Bot) Start(cancel context.CancelFunc) {
 	b.Session.AddHandler(b.ready)
 	b.Session.AddHandler(b.messageCreate)
 
-	err := b.Session.Open()
-	if err != nil {
-		log.Fatalf("Error opening Discord session: %v", err)
+	// Retry connecting to Discord with exponential backoff
+	maxRetries := 10
+	baseBackoff := time.Second
+	maxBackoff := 5 * time.Minute
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := b.Session.Open()
+		if err == nil {
+			break
+		}
+
+		if attempt == maxRetries-1 {
+			log.Fatalf("Failed to connect to Discord after %d attempts: %v", maxRetries, err)
+		}
+
+		backoff := baseBackoff * time.Duration(1<<attempt)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+		log.Printf("Discord connection failed: %v. Retrying in %v (attempt %d/%d)", err, backoff, attempt+1, maxRetries)
+		time.Sleep(backoff)
 	}
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")

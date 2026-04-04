@@ -49,34 +49,30 @@ func main() {
 		log.Fatalf("Error creating bot: %v", err)
 	}
 
-	// Start Home Assistant client
-	hassClient, err := hass.New(cfg.HassURL, cfg.HassToken)
-	if err != nil {
-		log.Fatalf("Error creating Home Assistant client: %v", err)
-	}
-
-	err = hassClient.Authenticate()
-	if err != nil {
-		log.Fatalf("Error authenticating with Home Assistant: %v", err)
-	}
-
-	// Register commands
-	b.RegisterCommand(&commands.Ping{})
-	b.RegisterCommand(&commands.ClearChannel{Config: cfg})
-	b.RegisterCommand(&commands.State{HassClient: hassClient, SensorPrefix: cfg.SensorPrefix})
-	b.RegisterCommand(&commands.Pause{})
-
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 
-	go hassClient.Listen(ctx)
+	// Create Home Assistant manager with reconnection support
+	hassManager := hass.NewManager(hass.DefaultManagerConfig(cfg.HassURL, cfg.HassToken))
 
-	events, err := hassClient.SubscribeToEvents()
-	if err != nil {
-		log.Fatalf("Error subscribing to Home Assistant events: %v", err)
+	// Try initial connection - if it fails, we'll keep trying in the background
+	if hassManager.TryConnectOnce() {
+		log.Println("Home Assistant: initial connection successful")
+	} else {
+		log.Println("Home Assistant: initial connection failed, will retry in background")
 	}
 
-	go sensors.HandleHassEvents(ctx, b, events, cfg.ChannelID, cfg.SensorPrefix)
+	// Start the manager in the background - it will handle reconnection automatically
+	go hassManager.Run(ctx)
+
+	// Register commands (state command needs the manager for client access)
+	b.RegisterCommand(&commands.Ping{})
+	b.RegisterCommand(&commands.ClearChannel{Config: cfg})
+	b.RegisterCommand(&commands.State{HassManager: hassManager, SensorPrefix: cfg.SensorPrefix})
+	b.RegisterCommand(&commands.Pause{})
+
+	// Start event handlers
+	go sensors.HandleHassEvents(ctx, b, hassManager.Events(), cfg.ChannelID, cfg.SensorPrefix)
 	go sensors.CheckOnSensors(
 		ctx,
 		b,
