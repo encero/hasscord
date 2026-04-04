@@ -107,20 +107,12 @@ func (m *Manager) connect() error {
 		return err
 	}
 
-	m.clientMu.Lock()
-	m.client = client
-	m.clientMu.Unlock()
-
 	// Subscribe to events
-	// We do this inline since we need to track the subscription
 	id := client.NextMessageID()
 	req := map[string]interface{}{
 		"id":   id,
 		"type": "subscribe_events",
 	}
-
-	resultChan := make(chan Message, 1)
-	client.RegisterPending(id, resultChan)
 
 	if err := client.Conn.WriteJSON(req); err != nil {
 		conn.Close()
@@ -128,22 +120,37 @@ func (m *Manager) connect() error {
 	}
 	log.Printf("Sent subscribe_events request with ID: %d", id)
 
-	// Wait for subscription confirmation with timeout
-	select {
-	case result := <-resultChan:
-		if !result.Success {
-			errMsg := "unknown error"
-			if result.Error != nil {
-				errMsg = result.Error.Message
-			}
-			conn.Close()
-			return &subscriptionError{message: errMsg}
-		}
-		log.Println("Successfully subscribed to Home Assistant events")
-	case <-time.After(10 * time.Second):
+	// Read the subscription acknowledgement inline before the main listen loop starts.
+	var result Message
+	if err := client.Conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		conn.Close()
-		return &subscriptionError{message: "timeout waiting for subscription confirmation"}
+		return err
 	}
+	if err := client.Conn.ReadJSON(&result); err != nil {
+		conn.Close()
+		return &subscriptionError{message: err.Error()}
+	}
+	if err := client.Conn.SetReadDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return err
+	}
+	if result.Type != "result" || result.ID != id {
+		conn.Close()
+		return &subscriptionError{message: "unexpected subscription response"}
+	}
+	if !result.Success {
+		errMsg := "unknown error"
+		if result.Error != nil {
+			errMsg = result.Error.Message
+		}
+		conn.Close()
+		return &subscriptionError{message: errMsg}
+	}
+	log.Println("Successfully subscribed to Home Assistant events")
+
+	m.clientMu.Lock()
+	m.client = client
+	m.clientMu.Unlock()
 
 	m.setConnected(true)
 	log.Println("Connected to Home Assistant successfully")

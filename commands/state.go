@@ -60,6 +60,7 @@ func (s *State) Execute(b bot.Messager, m *discordgo.MessageCreate, args []strin
 
 	err := client.Conn.WriteJSON(req)
 	if err != nil {
+		client.RemovePending(id)
 		log.Printf("Error sending get_states request: %v", err)
 		if _, sendErr := b.ChannelMessageSend(m.ChannelID, "Failed to fetch states from Home Assistant."); sendErr != nil {
 			log.Printf("Error sending fetch error message: %v", sendErr)
