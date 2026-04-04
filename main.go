@@ -77,7 +77,16 @@ func main() {
 	}
 
 	go sensors.HandleHassEvents(ctx, b, events, cfg.ChannelID, cfg.SensorPrefix)
-	go sensors.CheckOnSensors(ctx, b, cfg.ChannelID, cfg.SensorOnTimeout, cfg.SensorOnTimeoutReminder, cfg.SensorPrefix)
+	go sensors.CheckOnSensors(
+		ctx,
+		b,
+		cfg.ChannelID,
+		cfg.SensorOnTimeout,
+		cfg.SensorOnTimeoutReminder,
+		cfg.SensorOnTimeoutReminderBackoff,
+		cfg.SensorOnTimeoutReminderMax,
+		cfg.SensorPrefix,
+	)
 
 	b.Start(cancel)
 }
