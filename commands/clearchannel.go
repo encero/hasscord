@@ -34,8 +34,9 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 	}
 
 	deletedCount := 0
-	lastMessageID := m.ID // Start from the message that triggered the command
+	lastMessageID := m.ID     // Start from the message that triggered the command
 	const maxIterations = 100 // Prevent infinite loops
+	reachedIterationLimit := true
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		messages, err := s.ChannelMessages(c.Config.ChannelID, 100, lastMessageID, "", "")
@@ -48,6 +49,7 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 		}
 
 		if len(messages) == 0 {
+			reachedIterationLimit = false
 			break // No more messages to delete
 		}
 
@@ -93,6 +95,7 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 		if len(messages) > 0 {
 			lastMessageID = messages[len(messages)-1].ID
 		} else {
+			reachedIterationLimit = false
 			break
 		}
 
@@ -100,7 +103,7 @@ func (c *ClearChannel) Execute(s bot.Messager, m *discordgo.MessageCreate, args 
 	}
 
 	msg := fmt.Sprintf("Finished clearing channel. Deleted %d messages.", deletedCount)
-	if iteration >= maxIterations {
+	if reachedIterationLimit {
 		msg += " (reached iteration limit)"
 	}
 	if _, err := s.ChannelMessageSend(m.ChannelID, msg); err != nil {

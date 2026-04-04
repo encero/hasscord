@@ -8,6 +8,14 @@ The bot is configured using environment variables. You can create a `.env` file 
 
 - `DISCORD_TOKEN`: Your Discord bot token.
 - `BOT_PREFIX`: The prefix for bot commands (defaults to `!`).
+- `HASS_URL`: Your Home Assistant URL.
+- `HASS_TOKEN`: Your Home Assistant long-lived access token.
+- `CHANNEL_ID`: Discord channel ID where notifications are sent.
+- `SENSOR_PREFIX`: Entity ID prefix to monitor (defaults to `binary_sensor.dvere_`).
+- `SENSOR_ON_TIMEOUT`: Delay before the first "door open" notification, in seconds (defaults to `15`).
+- `SENSOR_ON_TIMEOUT_REMINDER`: Base delay between reminder notifications, in seconds (defaults to `60`).
+- `SENSOR_ON_TIMEOUT_REMINDER_BACKOFF`: Multiplier applied after each reminder to slow future reminders down (defaults to `1`, meaning no backoff).
+- `SENSOR_ON_TIMEOUT_REMINDER_MAX`: Maximum delay between reminders, in seconds (defaults to the base reminder delay).
 
 ## Usage
 

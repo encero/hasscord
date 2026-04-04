@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -21,9 +22,10 @@ var (
 
 // SensorState holds information about a sensor that is currently "on".
 type SensorState struct {
-	OnTime   time.Time
-	LastSent time.Time
-	Paused   bool
+	OnTime               time.Time
+	LastSent             time.Time
+	CurrentReminderDelay time.Duration
+	Paused               bool
 }
 
 // PauseNotifications pauses notifications for currently open doors
@@ -124,7 +126,12 @@ func handleEvent(b *bot.Bot, event hass.Event, channelID string, sensorPrefix st
 
 	if stateData.NewState.State == "on" {
 		if _, exists := onSensors[stateData.EntityID]; !exists {
-			onSensors[stateData.EntityID] = SensorState{OnTime: time.Now(), LastSent: time.Time{}, Paused: false}
+			onSensors[stateData.EntityID] = SensorState{
+				OnTime:               time.Now(),
+				LastSent:             time.Time{},
+				CurrentReminderDelay: 0,
+				Paused:               false,
+			}
 			log.Printf("Sensor %s turned on at %s", stateData.EntityID, onSensors[stateData.EntityID].OnTime.Format(time.RFC3339))
 		}
 	} else {
@@ -142,11 +149,12 @@ func handleEvent(b *bot.Bot, event hass.Event, channelID string, sensorPrefix st
 }
 
 // CheckOnSensors monitors sensors that are "on" and sends notifications based on timeouts
-func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout int, timeoutReminder int, sensorPrefix string) {
+func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout int, timeoutReminder int, timeoutReminderBackoff float64, timeoutReminderMax int, sensorPrefix string) {
 	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
 	defer ticker.Stop()
 
 	reminderTime := time.Duration(timeoutReminder) * time.Second
+	maxReminderTime := time.Duration(timeoutReminderMax) * time.Second
 	const maxRemindDuration = 1 * time.Hour
 
 	for {
@@ -166,7 +174,11 @@ func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout i
 
 			hasBeenNotified := !state.LastSent.IsZero()
 			isUnderAnHour := durationOn < maxRemindDuration
-			timeForReminder := time.Since(state.LastSent) >= reminderTime
+			currentReminderDelay := state.CurrentReminderDelay
+			if currentReminderDelay <= 0 {
+				currentReminderDelay = reminderTime
+			}
+			timeForReminder := time.Since(state.LastSent) >= currentReminderDelay
 			shouldSendReminder := hasBeenNotified && isUnderAnHour && timeForReminder
 
 			isOverAnHour := durationOn >= maxRemindDuration
@@ -178,15 +190,17 @@ func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout i
 					log.Printf("Error sending initial door open message: %v", err)
 				}
 				state.LastSent = time.Now()
+				state.CurrentReminderDelay = reminderTime
 				onSensors[entityID] = state // Update the map with the new LastSent time
 				log.Printf("Sent initial message for %s", entityID)
 			} else if shouldSendReminder && !state.Paused {
-				// Resend message every 5 minutes, up to an hour
+				// Resend reminders with a configurable backoff, up to an hour of total tracking.
 				message := fmt.Sprintf("Reminder: Door `%s` is still open (open for %s)! @everyone", strings.TrimPrefix(entityID, sensorPrefix), durationOn.Round(time.Second).String())
 				if _, err := b.Session.ChannelMessageSend(channelID, message); err != nil {
 					log.Printf("Error sending reminder message: %v", err)
 				}
 				state.LastSent = time.Now()
+				state.CurrentReminderDelay = nextReminderDelay(currentReminderDelay, timeoutReminderBackoff, maxReminderTime)
 				onSensors[entityID] = state // Update the map with the new LastSent time
 				log.Printf("Sent reminder message for %s", entityID)
 			} else if isOverAnHour {
@@ -203,4 +217,23 @@ func CheckOnSensors(ctx context.Context, b *bot.Bot, channelID string, timeout i
 		}
 		onSensorsMutex.Unlock()
 	}
+}
+
+func nextReminderDelay(current time.Duration, backoff float64, max time.Duration) time.Duration {
+	if current <= 0 {
+		return max
+	}
+	if backoff <= 1 {
+		return current
+	}
+
+	next := time.Duration(math.Ceil(float64(current) * backoff))
+	if next < current {
+		next = current
+	}
+	if max > 0 && next > max {
+		return max
+	}
+
+	return next
 }

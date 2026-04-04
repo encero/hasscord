@@ -12,3 +12,7 @@ services:
       # For example:
       # SOME_OTHER_VAR: "value"
       # DISCORD_TOKEN: ${DISCORD_TOKEN} # Example of explicitly mapping from .env
+      # SENSOR_ON_TIMEOUT: "120"
+      # SENSOR_ON_TIMEOUT_REMINDER: "300"
+      # SENSOR_ON_TIMEOUT_REMINDER_BACKOFF: "1.5"
+      # SENSOR_ON_TIMEOUT_REMINDER_MAX: "1800"
